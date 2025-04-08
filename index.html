@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Web3 Dino Game</title>
+    <script src="https://cdn.jsdelivr.net/npm/web3@1.10.0/dist/web3.min.js"></script>
+
+    
+    
+    <style>
+    
+
+    
+        canvas {
+            border: 2px solid #000;
+            display: block;
+            margin: 20px auto;
+        }
+
+        #controls,
+        #walletAddress {
+            text-align: center;
+            font-family: sans-serif;
+        }
+
+        button {
+            margin: 5px;
+            padding: 10px 20px;
+        }
+    </style>
+</head>
+
+<body>
+
+
+<script>
+    async function addAndSwitchToMonadTestnet() {
+  if (!window.ethereum) {
+    alert("Please install MetaMask or a Web3 wallet!");
+    return;
+  }
+
+  const MONAD_TESTNET = {
+    chainId: "0x279F", // 314 in hex (Monad Testnet)
+    chainName: "Monad Testnet",
+    nativeCurrency: {
+      name: "Monad",
+      symbol: "MON",
+      decimals: 18,
+    },
+    rpcUrls: ["https://testnet-rpc.monad.xyz"],
+    blockExplorerUrls: ["https://testnet.monadexplorer.com/"],
+  };
+
+  try {
+    // Check current chain
+    const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
+
+    // If already on Monad Testnet, do nothing
+    if (currentChainId === '0x279F') {
+      console.log("Already on Monad Testnet");
+      return;
+    }
+
+    // Try switching to Monad Testnet
+    try {
+      await window.ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: '0x279F' }], // Monad Testnet chainId
+      });
+      console.log("Switched to Monad Testnet");
+    } catch (switchError) {
+      // If Monad Testnet is not added, add it
+      if (switchError.code === 4902) {
+        try {
+          await window.ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [MONAD_TESTNET],
+          });
+          console.log("Monad Testnet network added!");
+        } catch (addError) {
+          console.error("Failed to add Monad Testnet network:", addError);
+          alert("Failed to add Monad Testnet. Please add it manually in your wallet.");
+        }
+      } else {
+        console.error("Failed to switch to Monad Testnet:", switchError);
+        alert("Failed to switch to Monad Testnet. Please try manually.");
+      }
+    }
+  } catch (error) {
+    console.error("General error:", error);
+    alert("An error occurred. Check console for details.");
+  }
+}
+
+// Run the function
+addAndSwitchToMonadTestnet();
+
+    
+</script>
+
+
+
+
+
+
+
+
+
+
+
+
+    <div id="controls">
+        <button id="connectBtn">Connect Wallet</button>
+        <p id="walletAddress" style="display:none;"></p>
+        <p>Score: <span id="score">0</span></p>
+        <button id="submitScoreBtn" style="display:none;">Submit Score</button>
+        <button id="restartBtn" style="display:none;">Restart Game</button>
+        <button id="historyBtn">Show My Score History</button>
+        <button id="leaderboardBtn">Show Leaderboard</button>
+    </div>
+
+    <canvas id="game" width="600" height="200"></canvas>
+
+    <div id="history" style="text-align:center;"></div>
+    <div id="leaderboard" style="text-align:center;"></div>
+
+    <script>
+        const contractAddress = "0x46c1b334f99b5268ea4277f2d60b5c7af940ee0c";
+    const abi = [
+      {
+        "inputs": [{ "internalType": "uint256", "name": "score", "type": "uint256" }],
+        "name": "submitScore",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+      },
+      {
+        "inputs": [{ "internalType": "address", "name": "player", "type": "address" }],
+        "name": "getScoreHistory",
+        "outputs": [
+          {
+            "components": [
+              { "internalType": "uint256", "name": "score", "type": "uint256" },
+              { "internalType": "uint256", "name": "timestamp", "type": "uint256" }
+            ],
+            "internalType": "struct DinoGame.PlayerScore[]",
+            "name": "",
+            "type": "tuple[]"
+          }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+      },
+      {
+        "inputs": [],
+        "name": "getTopPlayers",
+        "outputs": [
+          { "internalType": "address[10]", "name": "topWallets", "type": "address[10]" },
+          { "internalType": "uint256[10]", "name": "topScores", "type": "uint256[10]" }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+      }
+    ];
+
+    let web3, account, contract;
+    let canvas = document.getElementById("game");
+    let ctx = canvas.getContext("2d");
+
+    let dino = { x: 50, y: 150, vy: 0, jumping: false };
+    let obstacles = [];
+    let score = 0;
+    let animation;
+    let isGameOver = false;
+    let isWalletConnected = false;
+    let hasSubmittedScore = false;
+
+    document.getElementById("connectBtn").onclick = async () => {
+      if (window.ethereum) {
+        web3 = new Web3(window.ethereum);
+        await window.ethereum.enable();
+        const accounts = await web3.eth.getAccounts();
+        account = accounts[0];
+        contract = new web3.eth.Contract(abi, contractAddress);
+
+        isWalletConnected = true;
+        document.getElementById("connectBtn").disabled = true;
+        document.getElementById("connectBtn").innerText = "Connected";
+        document.getElementById("walletAddress").style.display = "block";
+        document.getElementById("walletAddress").innerText = "Connected: " + account;
+
+        loadHistory();
+        loadLeaderboard();
+        updateGame();
+      } else {
+        alert("Please install MetaMask.");
+      }
+    };
+
+    function drawDino() {
+      ctx.fillStyle = "green";
+      ctx.fillRect(dino.x, dino.y, 20, 20);
+    }
+
+    function drawObstacle(ob) {
+      ctx.fillStyle = "red";
+      ctx.fillRect(ob.x, ob.y, 20, 20);
+    }
+
+    function updateGame() {
+      if (!isWalletConnected || isGameOver) return;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawDino();
+
+      if (Math.random() < 0.02) obstacles.push({ x: 600, y: 150 });
+
+      obstacles.forEach((ob, i) => {
+        ob.x -= 4;
+        drawObstacle(ob);
+        if (ob.x < 0) obstacles.splice(i, 1);
+
+        if (
+          ob.x < dino.x + 20 &&
+          ob.x + 20 > dino.x &&
+          ob.y === dino.y
+        ) {
+          gameOver();
+        }
+      });
+
+      if (dino.jumping) {
+        dino.vy += 1;
+        dino.y += dino.vy;
+        if (dino.y >= 150) {
+          dino.y = 150;
+          dino.jumping = false;
+        }
+      }
+
+      score++;
+      document.getElementById("score").innerText = score;
+      animation = requestAnimationFrame(updateGame);
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (e.code === "Space" && !dino.jumping && !isGameOver) {
+        dino.vy = -15;
+        dino.jumping = true;
+      }
+    });
+
+async function gameOver() {
+if (isGameOver) return;
+isGameOver = true;
+cancelAnimationFrame(animation);
+alert("Game Over! Final Score: " + score);
+
+try {
+await contract.methods.submitScore(score).send({ from: account });
+alert("Score submitted!");
+hasSubmittedScore = true;
+document.getElementById("restartBtn").style.display = "inline-block";
+loadHistory();
+loadLeaderboard();
+} catch (err) {
+alert("Error submitting score. Please try again.");
+document.getElementById("restartBtn").style.display = "none";
+}
+}
+
+    document.getElementById("submitScoreBtn").onclick = async () => {
+      
+    };
+
+    document.getElementById("restartBtn").onclick = () => {
+      if (!hasSubmittedScore) {
+        alert("Please submit your score before restarting.");
+        return;
+      }
+      dino = { x: 50, y: 150, vy: 0, jumping: false };
+      obstacles = [];
+      score = 0;
+      isGameOver = false;
+      hasSubmittedScore = false;
+      document.getElementById("score").innerText = score;
+      document.getElementById("restartBtn").style.display = "none";
+      updateGame();
+    };
+
+    async function loadHistory() {
+      try {
+        const scores = await contract.methods.getScoreHistory(account).call();
+        let html = "<h3>My Score History</h3>";
+        scores.slice().reverse().forEach(s => {
+          const date = new Date(s.timestamp * 1000).toLocaleString();
+          html += `<p>${s.score} points - ${date}</p>`;
+        });
+        document.getElementById("history").innerHTML = html;
+      } catch (err) {
+        document.getElementById("history").innerText = "Failed to load history.";
+      }
+    }
+
+    async function loadLeaderboard() {
+      try {
+        const result = await contract.methods.getTopPlayers().call();
+        const [wallets, scores] = result;
+        let html = "<h3>Leaderboard</h3>";
+        for (let i = 0; i < 10; i++) {
+          if (scores[i] > 0) {
+            html += `<p>${i + 1}. ${wallets[i]} - ${scores[i]} pts</p>`;
+          }
+        }
+        document.getElementById("leaderboard").innerHTML = html;
+      } catch (err) {
+        document.getElementById("leaderboard").innerText = "Failed to load leaderboard.";
+      }
+    }
+
+    document.getElementById("historyBtn").onclick = loadHistory;
+    document.getElementById("leaderboardBtn").onclick = loadLeaderboard;
+    </script>
+</body>
+
+</html>
